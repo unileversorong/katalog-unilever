@@ -2432,119 +2432,121 @@ function render(){
     `;
   }).join("");
 
-  catalogEl.querySelectorAll('.pimg').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      const img = el.querySelector('img');
-      if(img) openImageLightbox(img.src, img.alt);
-    });
-  });
-  catalogEl.querySelectorAll('.addbtn').forEach(btn=>{
-    btn.addEventListener('click', ()=>addToCart(btn.dataset.kode));
-  });
-  catalogEl.querySelectorAll('.qtybox button').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const input = btn.parentElement.querySelector('input');
-      let v = parseInt(input.value||"1");
-      v = btn.dataset.dir==="up" ? v+1 : Math.max(0,v-1);
-      input.value = v;
-      const kode = btn.closest('.pcard').querySelector('.addbtn').dataset.kode;
-      const unit = btn.closest('.pcard').querySelector('.unitsel .unitbtn.active').dataset.unit;
-      setPendingUnitQty(kode, unit, v);
-    });
-  });
-  catalogEl.querySelectorAll('.qtybox input[type="number"]').forEach(input=>{
-    input.addEventListener('focus', ()=>input.select()); // biar "0"-nya langsung ke-pilih & gampang ditimpa
-    input.addEventListener('input', ()=>{
-      // buang angka 0 di depan pas lagi diketik manual (misal "010" -> "10"), biar gak bikin bingung
-      if(input.value.length>1) input.value = input.value.replace(/^0+/, '') || '0';
-      const card = input.closest('.pcard');
-      const kode = card.querySelector('.addbtn').dataset.kode;
-      const unit = card.querySelector('.unitsel .unitbtn.active').dataset.unit;
-      setPendingUnitQty(kode, unit, parseInt(input.value||"0"));
-    });
-  });
-  catalogEl.querySelectorAll('.unitbtn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const wrap = btn.closest('.unitsel');
-      wrap.querySelectorAll('.unitbtn').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      // pindah tab unit HANYA mengganti tampilan qty yang lagi diedit —
-      // qty unit lain yang sudah diisi sebelumnya TETAP tersimpan (lihat pendingState)
-      const kode = wrap.dataset.kode;
-      const qtyInput = document.getElementById('qty-'+kode);
-      if(qtyInput) qtyInput.value = pendingState[kode]?.[btn.dataset.unit] || 0;
-    });
-  });
+  // Catatan performa: klik/input di dalam kartu produk (foto, +Pesan, qtybox, unit
+  // tab) ditangani lewat EVENT DELEGATION satu kali di bawah (di luar render()),
+  // bukan di-attach ulang ke setiap kartu tiap kali render() jalan. Untuk kategori
+  // "Semua" (800+ kartu) itu artinya ribuan addEventListener() dihemat di setiap
+  // render — perilakunya persis sama, cuma cara pemasangannya yang lebih murah.
 
   updatePendingBar();
-  squarifyImages();
   fitProductNames();
-  requestAnimationFrame(()=>{ squarifyImages(); equalizeCardHeights(); });
+  squarifyImages();
+  equalizeCardHeights();
 
-  // foto dimuat async — begitu semua gambar di grid ini selesai load,
-  // ukur ulang tinggi kartu supaya tetap simetris (mencegah kartu "loncat" tinggi)
+  // foto dimuat async — kalau ADA yang belum selesai decode saat render pertama kali
+  // (jarang, biasanya cuma di device/koneksi lambat), ukur ulang sekali begitu semuanya
+  // siap supaya tinggi kartu tetap simetris (mencegah kartu "loncat" tinggi).
   const imgs = catalogEl.querySelectorAll('img');
-  let pending = imgs.length;
-  if(pending>0){
-    imgs.forEach(img=>{
-      if(img.complete){ pending--; }
-      else{
-        img.addEventListener('load', ()=>{ pending--; if(pending<=0){ squarifyImages(); equalizeCardHeights(); } });
-        img.addEventListener('error', ()=>{ pending--; if(pending<=0){ squarifyImages(); equalizeCardHeights(); } });
-      }
+  const stillLoading = Array.from(imgs).filter(img=>!img.complete);
+  if(stillLoading.length>0){
+    let pending = stillLoading.length;
+    const onDone = ()=>{ pending--; if(pending<=0){ squarifyImages(); equalizeCardHeights(); } };
+    stillLoading.forEach(img=>{
+      img.addEventListener('load', onDone, {once:true});
+      img.addEventListener('error', onDone, {once:true});
     });
-    if(pending<=0){ squarifyImages(); equalizeCardHeights(); }
   }
-  // jaring pengaman terakhir: beberapa browser/HP butuh sedikit delay ekstra
-  // supaya layout benar-benar final sebelum diukur (terutama saat produk banyak)
-  setTimeout(()=>{ squarifyImages(); equalizeCardHeights(); }, 350);
 }
 
 // Paksa kotak foto selalu persegi sempurna lewat JS (bukan cuma andalkan CSS
 // aspect-ratio), karena sebagian browser/WebView di HP kadang tidak konsisten
 // menerapkannya terutama untuk foto dengan proporsi asli yang jauh dari persegi.
+//
+// PENTING (performa): baca dulu SEMUA offsetWidth (fase "read"), baru tulis SEMUA
+// style.height (fase "write"). Kalau read/write diselang-seling per elemen, browser
+// terpaksa recalculate layout di setiap iterasi ("layout thrashing") — untuk 800+
+// kartu ini yang paling bikin halaman freeze saat ganti kategori/brand.
 function squarifyImages(){
-  document.querySelectorAll('.pimg').forEach(el=>{
-    const w = el.offsetWidth;
-    if(w>0) el.style.height = w + 'px';
-  });
+  const els = Array.from(document.querySelectorAll('.pimg'));
+  const widths = els.map(el=>el.offsetWidth);         // fase read (1x forced layout)
+  els.forEach((el,i)=>{ if(widths[i]>0) el.style.height = widths[i] + 'px'; }); // fase write
 }
 
+// Cache ukuran font per (nama produk + lebar kolom) — nama produk yang sama akan
+// selalu dapat ukuran font yang sama selama lebar grid-nya sama, jadi begitu user
+// pindah-pindah kategori/brand berulang kali, hasil sebelumnya dipakai lagi (tidak
+// dihitung ulang dari nol tiap render).
+const __nameFitCache = new Map();
+const __nameFitCanvas = document.createElement('canvas');
+const __nameFitCtx = __nameFitCanvas.getContext('2d');
+const __NAME_FONT_STACK = `'Poppins',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif`;
+function __measureNameWidth(text, size){
+  __nameFitCtx.font = `700 ${size}px ${__NAME_FONT_STACK}`;
+  return __nameFitCtx.measureText(text).width;
+}
+
+// Mengecilkan font nama produk sampai muat 1 baris (tanpa terpotong ellipsis).
+// Versi lama membaca el.scrollWidth di dalam loop while PER elemen — itu juga
+// layout thrashing (read+write bergantian, dikali ratusan elemen, dikali beberapa
+// langkah pengecilan tiap elemen). Versi ini ukur lebar teks pakai <canvas>
+// (tidak menyentuh layout DOM sama sekali) supaya baca lebar kolom (elemen) dulu
+// dalam 1 batch, lalu tulis font-size dalam 1 batch — hasil akhirnya sama (nama
+// tetap mengecil sampai muat), cuma jauh lebih murah dieksekusi.
 function fitProductNames(){
-  document.querySelectorAll('.pname').forEach(el=>{
-    let size = 14.5;
-    el.style.fontSize = size + 'px';
-    while(el.scrollWidth > el.clientWidth && size > 10.5){
-      size -= 0.5;
-      el.style.fontSize = size + 'px';
+  const els = Array.from(document.querySelectorAll('.pname'));
+  if(els.length===0) return;
+  const items = els.map(el=>({el, width:el.clientWidth, text:el.textContent})); // fase read
+  items.forEach(({el, width, text})=>{ // fase write
+    if(width<=0) return;
+    const key = text + '|' + width;
+    let size = __nameFitCache.get(key);
+    if(size===undefined){
+      size = 14.5;
+      const target = width - 1; // sedikit margin aman vs beda subpixel canvas vs DOM
+      while(size > 10.5 && __measureNameWidth(text, size) > target){
+        size -= 0.5;
+      }
+      __nameFitCache.set(key, size);
     }
+    el.style.fontSize = size + 'px';
   });
 }
 
 // Menyamakan tinggi kartu produk per baris dengan pengukuran piksel langsung
 // (tidak mengandalkan CSS grid "stretch" saja, karena pembulatan sub-piksel
 // browser pada zoom tertentu bisa bikin kartu dalam 1 baris beda tinggi).
+//
+// PENTING (performa): semua grid kategori diproses dalam SATU fase read dan SATU
+// fase write (bukan per-grid bergantian read lalu write) — kalau "Semua" kategori
+// aktif ada belasan grid sekaligus, ini memangkas puluhan forced-layout jadi cuma 1.
 function equalizeCardHeights(){
-  document.querySelectorAll('.grid').forEach(grid=>{
-    const cards = Array.from(grid.querySelectorAll('.pcard'));
-    if(cards.length===0) return;
-    cards.forEach(c=>{ c.style.height='auto'; });
+  const grids = Array.from(document.querySelectorAll('.grid'));
+  if(grids.length===0) return;
+  const gridCards = grids.map(g=>Array.from(g.querySelectorAll('.pcard')));
 
-    // urutkan berdasar posisi vertikal, lalu kelompokkan dengan TOLERANSI
-    // (bukan pembulatan integer ketat) supaya beda sub-piksel akibat zoom
-    // tidak bikin kartu se-baris dianggap beda baris
-    const sorted = cards.slice().sort((a,b)=>a.offsetTop-b.offsetTop);
+  // fase write #1: reset tinggi biar terukur dari konten asli
+  gridCards.forEach(cards=>{ cards.forEach(c=>{ c.style.height='auto'; }); });
+
+  // fase read: kelompokkan per baris (toleransi subpixel) untuk semua grid sekaligus
+  const gridRows = gridCards.map(cards=>{
+    if(cards.length===0) return [];
+    const withPos = cards.map(c=>({c, top:c.offsetTop, h:c.offsetHeight}));
+    const sorted = withPos.slice().sort((a,b)=>a.top-b.top);
     const TOLERANCE = 6; // px
     const rows = [];
-    sorted.forEach(c=>{
-      let row = rows.find(r=>Math.abs(r.top - c.offsetTop) <= TOLERANCE);
-      if(!row){ row = {top:c.offsetTop, cards:[]}; rows.push(row); }
-      row.cards.push(c);
+    sorted.forEach(item=>{
+      let row = rows.find(r=>Math.abs(r.top - item.top) <= TOLERANCE);
+      if(!row){ row = {top:item.top, items:[]}; rows.push(row); }
+      row.items.push(item);
     });
+    return rows;
+  });
 
+  // fase write #2: terapkan tinggi maksimum per baris
+  gridRows.forEach(rows=>{
     rows.forEach(row=>{
-      const maxH = Math.max(...row.cards.map(c=>c.offsetHeight));
-      row.cards.forEach(c=>{ c.style.height = maxH + 'px'; });
+      const maxH = Math.max(...row.items.map(it=>it.h));
+      row.items.forEach(it=>{ it.c.style.height = maxH + 'px'; });
     });
   });
 }
@@ -2563,7 +2565,7 @@ const UNIT_LABEL = {karton:'Karton', lusin:'Lusin', satuan:'Satuan'};
 
 function cardHTML(p){
   const imgInner = p.foto
-    ? `<img src="${p.foto}" alt="${p.nama}">`
+    ? `<img src="${p.foto}" alt="${p.nama}" decoding="async" loading="lazy">`
     : (p.isi||"?");
   const lusinCell = (p.lusin!=null)
     ? `<b>${rupiah(p.lusin)}</b>` : `<b class="na">&mdash;</b>`;
@@ -2977,7 +2979,79 @@ function buildWAMessage(){
   return lines.join("\n");
 }
 
-document.getElementById('search').addEventListener('input', render);
+// Debounce: render katalog cuma dipanggil 180ms setelah user berhenti mengetik,
+// bukan di setiap ketukan huruf — mencegah rebuild 800+ kartu berkali-kali per detik
+// yang bikin ketikan terasa lag/patah-patah.
+let searchDebounceTimer = null;
+document.getElementById('search').addEventListener('input', ()=>{
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(render, 180);
+});
+
+// ===== Event delegation untuk interaksi di dalam kartu produk =====
+// Dipasang SEKALI di sini (bukan di dalam render()) supaya tidak perlu addEventListener
+// ulang ke ribuan tombol tiap kali kartu di-render ulang. Karena render() cuma mengganti
+// isi #catalog (bukan mengganti elemen #catalog itu sendiri), listener di container ini
+// tetap aktif dan otomatis "menangkap" semua kartu baru — perilakunya identik dengan versi
+// sebelumnya (klik per elemen), cuma jauh lebih murah untuk katalog yang isinya banyak.
+(function(){
+  const catalogEl = document.getElementById('catalog');
+
+  catalogEl.addEventListener('click', (e)=>{
+    const pimg = e.target.closest('.pimg');
+    if(pimg){
+      const img = pimg.querySelector('img');
+      if(img) openImageLightbox(img.src, img.alt);
+      return;
+    }
+
+    const addbtn = e.target.closest('.addbtn');
+    if(addbtn){ addToCart(addbtn.dataset.kode); return; }
+
+    const qtyBtn = e.target.closest('.qtybox button');
+    if(qtyBtn){
+      const input = qtyBtn.parentElement.querySelector('input');
+      let v = parseInt(input.value||"1");
+      v = qtyBtn.dataset.dir==="up" ? v+1 : Math.max(0,v-1);
+      input.value = v;
+      const kode = qtyBtn.closest('.pcard').querySelector('.addbtn').dataset.kode;
+      const unit = qtyBtn.closest('.pcard').querySelector('.unitsel .unitbtn.active').dataset.unit;
+      setPendingUnitQty(kode, unit, v);
+      return;
+    }
+
+    const unitBtn = e.target.closest('.unitbtn');
+    if(unitBtn){
+      const wrap = unitBtn.closest('.unitsel');
+      wrap.querySelectorAll('.unitbtn').forEach(b=>b.classList.remove('active'));
+      unitBtn.classList.add('active');
+      // pindah tab unit HANYA mengganti tampilan qty yang lagi diedit —
+      // qty unit lain yang sudah diisi sebelumnya TETAP tersimpan (lihat pendingState)
+      const kode = wrap.dataset.kode;
+      const qtyInput = document.getElementById('qty-'+kode);
+      if(qtyInput) qtyInput.value = pendingState[kode]?.[unitBtn.dataset.unit] || 0;
+      return;
+    }
+  });
+
+  // 'focus' tidak bubble secara default, makanya listener-nya dipasang di FASE CAPTURE
+  // (parameter ketiga = true) supaya tetap bisa "menangkap" input di dalam kartu.
+  catalogEl.addEventListener('focus', (e)=>{
+    const input = e.target.closest('.qtybox input[type="number"]');
+    if(input) input.select(); // biar "0"-nya langsung ke-pilih & gampang ditimpa
+  }, true);
+
+  catalogEl.addEventListener('input', (e)=>{
+    const input = e.target.closest('.qtybox input[type="number"]');
+    if(!input) return;
+    // buang angka 0 di depan pas lagi diketik manual (misal "010" -> "10"), biar gak bikin bingung
+    if(input.value.length>1) input.value = input.value.replace(/^0+/, '') || '0';
+    const card = input.closest('.pcard');
+    const kode = card.querySelector('.addbtn').dataset.kode;
+    const unit = card.querySelector('.unitsel .unitbtn.active').dataset.unit;
+    setPendingUnitQty(kode, unit, parseInt(input.value||"0"));
+  });
+})();
 document.getElementById('openCart').addEventListener('click', ()=>{
   renderModal();
   document.getElementById('modalWrap').classList.add('show');
