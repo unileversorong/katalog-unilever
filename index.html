@@ -589,7 +589,11 @@
 
 (function() {
   var PASS_HASH = "abab3b95a99492ef4291b979a34acede792239ae3f35335c0b82704ba7fb8f0f";
-  var STORAGE_KEY = "katalog_unilever_auth_v1";
+  // v16: SENGAJA tidak lagi pakai localStorage utk "ingat" login — setiap buka link
+  // SELALU minta password lagi (disamakan dgn perilaku project "Peta Outlet Swikie",
+  // atas permintaan eksplisit user). Sebelumnya (v9-v15) password sukses disimpan ke
+  // localStorage jadi browser yg sama tetap "ingat" & langsung terbuka di kunjungan
+  // berikutnya — itu SENGAJA dihapus di sini, bukan bug.
   async function sha256(text) {
     var enc = new TextEncoder().encode(text);
     var buf = await crypto.subtle.digest('SHA-256', enc);
@@ -600,11 +604,6 @@
     var loginEl = document.getElementById('login-screen');
     if (loginEl) loginEl.style.display = 'none';
   }
-  try {
-    if (localStorage.getItem(STORAGE_KEY) === PASS_HASH) {
-      unlock();
-    }
-  } catch(e) { /* localStorage unavailable, will just ask for password each time */ }
 
   document.getElementById('login-btn').addEventListener('click', tryLogin);
   document.getElementById('login-pass').addEventListener('keydown', function(e) {
@@ -623,7 +622,6 @@
       return;
     }
     if (hash === PASS_HASH) {
-      try { localStorage.setItem(STORAGE_KEY, PASS_HASH); } catch(e) {}
       unlock();
     } else {
       errEl.textContent = 'Password salah, coba lagi.';
