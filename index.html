@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
-<title>Katalog Produk</title>
+<title>Katalog Produk SORONG</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -146,8 +146,25 @@
 
   .pcard{
     background:var(--card);border:1px solid var(--line);border-radius:12px;
-    overflow:hidden;display:flex;flex-direction:column;
+    overflow:hidden;display:flex;flex-direction:column;position:relative;
   }
+  /* ===== Status stok habis (khusus versi kota Sorong/Nabire, lihat STOCK_URL) =====
+     Filter grayscale+opacity ditaruh di .pimg & .pbody (BUKAN di .pcard langsung)
+     supaya badge "Stok Habis" tetap full-color & tajam (badge = sibling, bukan
+     child dari elemen yang di-filter). */
+  .pcard.habis .pimg,
+  .pcard.habis .pbody{ filter:grayscale(1) opacity(.55); }
+  .habis-badge{
+    display:none;position:absolute;top:8px;right:8px;z-index:5;
+    background:#8A1C1C;color:#fff;font-size:10px;font-weight:800;
+    padding:4px 10px;border-radius:20px;letter-spacing:.3px;
+    box-shadow:0 2px 6px rgba(0,0,0,.25);
+  }
+  .pcard.habis .habis-badge{ display:block; }
+  .pcard.habis .addbtn{ background:#B9B4A4;color:#5A5648;cursor:not-allowed; }
+  .pcard.habis .addbtn:disabled{ opacity:1; }
+  .pcard.habis .qtybox button:disabled,
+  .pcard.habis .qtybox input:disabled{ opacity:.5;cursor:not-allowed; }
   .pimg{
     aspect-ratio:1/1;background:#FFFFFF;
     display:flex;align-items:center;justify-content:center;color:var(--navy);
@@ -474,6 +491,12 @@
   .login-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px 24px;width:100%;max-width:360px;box-shadow:0 8px 24px rgba(20,30,20,.08);text-align:center;}
   .login-card h1{font-size:17px;color:var(--navy-dark);margin:0 0 4px;}
   .login-card p{font-size:12px;color:var(--muted);margin:0 0 20px;}
+  .login-card .login-kota-label{font-size:11px;font-weight:800;color:var(--amber);letter-spacing:1.5px;margin:0 0 10px;text-transform:uppercase;}
+  .role-btn{width:100%;padding:13px;border-radius:10px;border:1px solid var(--line);background:var(--paper);color:var(--navy-dark);font-size:14px;font-weight:700;cursor:pointer;margin-top:10px;}
+  .role-btn:first-of-type{margin-top:4px;}
+  .role-btn:hover{background:#fff;border-color:var(--navy);}
+  .role-btn.role-btn-admin{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .login-card .link-btn{width:100%;background:none;border:none;color:var(--muted);font-size:12px;margin-top:14px;cursor:pointer;text-decoration:underline;padding:4px;}
   .login-card input{width:100%;padding:11px 13px;border-radius:9px;border:1px solid var(--line);font-size:14px;background:var(--paper);text-align:center;letter-spacing:2px;box-sizing:border-box;}
   .login-card input:focus{outline:2px solid var(--amber);background:#fff;}
   .login-card button{width:100%;margin-top:12px;background:var(--navy);color:#fff;border:none;border-radius:10px;padding:12px;font-size:13.5px;font-weight:700;cursor:pointer;}
@@ -483,12 +506,21 @@
 <body class="locked">
 
 <div id="login-screen">
-  <div class="login-card">
+  <div class="login-card" id="roleChoiceCard">
     <h1>Katalog Produk Unilever</h1>
+    <p class="login-kota-label">SORONG</p>
+    <p>Masuk sebagai:</p>
+    <button id="roleCustomerBtn" class="role-btn">🛒 Customer (Outlet)</button>
+    <button id="roleAdminBtn" class="role-btn role-btn-admin">🔐 Admin (Update Stok)</button>
+  </div>
+  <div class="login-card" id="customerLoginCard" style="display:none;">
+    <h1>Katalog Produk Unilever</h1>
+    <p class="login-kota-label">SORONG</p>
     <p>Masukkan password untuk melihat katalog</p>
     <input id="login-pass" type="password" placeholder="Password" autocomplete="off">
     <button id="login-btn">Masuk</button>
     <div class="loginerr" id="login-err"></div>
+    <button id="backToRoleBtn" class="link-btn">&larr; Kembali</button>
   </div>
 </div>
 
@@ -496,7 +528,7 @@
 <header>
   <div class="brand-row">
     <div>
-      <p class="brand-name">KATALOG PRODUK UNILEVER</p>
+      <p class="brand-name">KATALOG PRODUK UNILEVER &middot; SORONG</p>
       <p class="brand-sub mobile-only">💬 Harga bisa berubah &middot; hubungi distributor</p>
       <p class="brand-sub desktop-only">💬 Harga dapat berubah sewaktu-waktu &middot; Hubungi distributor untuk konfirmasi</p>
     </div>
@@ -608,6 +640,28 @@
   document.getElementById('login-btn').addEventListener('click', tryLogin);
   document.getElementById('login-pass').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') tryLogin();
+  });
+
+  // ===== v18: menu awal pilih peran (Customer / Admin) =====
+  // Link katalog kota ini jadi SATU pintu masuk: pilih "Customer" -> lanjut ke
+  // form password customer yang sudah ada (di bawah). Pilih "Admin" -> pindah ke
+  // admin_stock.html (file TERPISAH & RINGAN, tidak ikut membawa 865 foto produk
+  // yg berat -- makanya admin TIDAK digabung jadi 1 file yg sama dgn katalog ini,
+  // cukup di-link dari sini). admin_stock.html HARUS ada di folder yg SAMA (repo
+  // GitHub yg sama) dgn file katalog kota ini.
+  document.getElementById('roleCustomerBtn').addEventListener('click', function(){
+    document.getElementById('roleChoiceCard').style.display = 'none';
+    document.getElementById('customerLoginCard').style.display = 'block';
+    document.getElementById('login-pass').focus();
+  });
+  document.getElementById('roleAdminBtn').addEventListener('click', function(){
+    window.location.href = 'admin_stock.html';
+  });
+  document.getElementById('backToRoleBtn').addEventListener('click', function(){
+    document.getElementById('customerLoginCard').style.display = 'none';
+    document.getElementById('roleChoiceCard').style.display = 'block';
+    document.getElementById('login-err').textContent = '';
+    document.getElementById('login-pass').value = '';
   });
 
   async function tryLogin() {
@@ -2381,6 +2435,30 @@ const cart = {}; // kode -> qty
 // saat kartu di-render ulang gara-gara pindah filter kategori/brand/pencarian.
 const pendingState = {}; // kode -> {qty, unit}
 
+// ===== Status stok per SKU (v17, khusus versi kota Sorong/Nabire) =====
+// STOCK_URL menunjuk ke file JSON kecil ({"habis":["kode1","kode2",...]}) yang
+// di-generate lewat halaman admin_stock.html oleh admin, lalu di-upload manual
+// ke folder yang SAMA di GitHub (menimpa file lama, nama file harus persis sama).
+// File ini HARUS ada di folder yang sama dengan file katalog kota ini di-hosting.
+// Kalau fetch gagal (offline, file belum pernah di-upload, atau file ini dibuka
+// langsung dari penyimpanan lokal via file:// -- browser blokir fetch file lokal)
+// -- GAGAL DIAM-DIAM, HABIS_SET tetap kosong, SEMUA produk dianggap TERSEDIA
+// (fail-open). Ini supaya render utama katalog TIDAK PERNAH terganggu/nge-block
+// gara-gara file stok belum ada/gagal diambil.
+const STOCK_URL = "stock.json"; // repo Sorong & repo Nabire TERPISAH SEPENUHNYA (beda GitHub
+                                 // repo/link publish) -- tiap repo punya stock.json sendiri,
+                                 // tidak saling terhubung/tidak ada nama file yang perlu dibedakan.
+let HABIS_SET = new Set();
+fetch(STOCK_URL + "?_=" + Date.now())
+  .then(r => r.ok ? r.json() : null)
+  .then(data => {
+    if(data && Array.isArray(data.habis) && data.habis.length){
+      HABIS_SET = new Set(data.habis);
+      render(); // re-render sekali supaya kartu yang stoknya habis langsung ke-update jadi redup
+    }
+  })
+  .catch(()=>{ /* offline / file:// lokal / file belum ada -- biarkan semua tampil normal */ });
+
 // Catatan pesanan (1 catatan untuk seluruh keranjang, bukan per produk — supaya
 // tidak sempit kalau tiap produk punya kotak catatan sendiri), diisi user di
 // halaman keranjang sebelum kirim pesanan via WhatsApp — ikut ditulis ke pesan WA.
@@ -2976,8 +3054,14 @@ function cardHTML(p){
     const q = saved[unit] || 0;
     return q>0 ? `${UNIT_LABEL[unit]} (${q})` : UNIT_LABEL[unit];
   };
+  // status stok (khusus versi kota, lihat STOCK_URL & HABIS_SET di atas) --
+  // kalau HABIS_SET masih kosong (belum sempat fetch / fetch gagal) semua
+  // produk dianggap TERSEDIA (fail-open), tidak ada yang diredupkan.
+  const isHabis = HABIS_SET.has(p.kode);
+  const dis = isHabis ? 'disabled' : '';
   return `
-    <div class="pcard ${hasAnyPendingQty(p.kode)?'pending':''}">
+    <div class="pcard ${hasAnyPendingQty(p.kode)?'pending':''} ${isHabis?'habis':''}">
+      <div class="habis-badge">Stok Habis</div>
       <div class="pimg"><span class="tag">${p.kode}</span>${imgInner}</div>
       <div class="pbody">
         <div class="pname">${p.nama}</div>
@@ -2994,11 +3078,11 @@ function cardHTML(p){
         </div>
         <div class="addrow">
           <div class="qtybox">
-            <button data-dir="down">&minus;</button>
-            <input type="number" min="0" value="${activeQty}" id="qty-${p.kode}">
-            <button data-dir="up">+</button>
+            <button data-dir="down" ${dis}>&minus;</button>
+            <input type="number" min="0" value="${activeQty}" id="qty-${p.kode}" ${dis}>
+            <button data-dir="up" ${dis}>+</button>
           </div>
-          <button class="addbtn" data-kode="${p.kode}">+ Pesan</button>
+          <button class="addbtn" data-kode="${p.kode}" ${dis}>${isHabis?'Stok Habis':'+ Pesan'}</button>
         </div>
       </div>
     </div>
