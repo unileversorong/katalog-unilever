@@ -64,6 +64,15 @@
   ol.steps li{margin-bottom:6px;}
   ol.steps code{background:var(--paper);border:1px solid var(--line);padding:1px 5px;border-radius:5px;font-size:11.5px;}
   .filename-box{background:var(--navy-dark);color:#fff;font-size:13px;font-weight:700;padding:9px 12px;border-radius:8px;margin:10px 0;text-align:center;letter-spacing:.3px;}
+  .btn.outline{background:#fff;color:var(--navy);border:1px solid var(--line);}
+  #publishStatus{font-size:12.5px;margin-top:10px;min-height:16px;line-height:1.5;}
+  #publishStatus.err{color:var(--red);font-weight:700;}
+  #publishStatus.ok{color:var(--green);font-weight:700;}
+  .card.warncard{border-color:#E8C888;background:#FBEFD8;}
+  .card.warncard h2{color:#7A5209;}
+  .card.warncard p{color:#7A5209;font-size:12px;line-height:1.6;margin:0;}
+  .divider-or{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;}
+  .divider-or::before, .divider-or::after{content:"";flex:1;height:1px;background:var(--line);}
 </style>
 </head>
 <body class="locked">
@@ -86,6 +95,11 @@
     <p>Halaman ini KHUSUS katalog SORONG &mdash; terpisah &amp; tidak berhubungan dengan kota lain. Upload laporan stok gudang harian &rarr; hasilkan <code style="background:rgba(255,255,255,.15);padding:1px 5px;border-radius:5px;">stock.json</code> &rarr; upload ke repo GitHub SORONG.</p>
   </header>
 
+  <div class="card warncard">
+    <h2>ℹ️ Soal keamanan publish otomatis</h2>
+    <p>Halaman ini menyimpan kunci akses KECIL (bukan token GitHub asli &mdash; token GitHub-nya tersimpan aman di server terpisah, tidak pernah ada di halaman ini) yang cuma mengizinkan update <code style="background:#fff;">stock.json</code> katalog <b>SORONG</b>. Tetap sebaiknya JANGAN kirim/bagikan file <code style="background:#fff;">admin_stock.html</code> ini ke siapa pun selain admin SORONG yang berwenang.</p>
+  </div>
+
   <div class="card">
     <h2>1. Upload file</h2>
     <label for="fileInput">File Distributor Stock Report (.xlsx)</label>
@@ -101,13 +115,16 @@
       <div class="stat habis"><div class="n" id="habisCount">-</div><div class="lbl">Stok Habis</div></div>
     </div>
     <div id="warnBox"></div>
-    <label>Daftar SKU yang akan ditandai "Stok Habis" (cek dulu sebelum download)</label>
+    <label>Daftar SKU yang akan ditandai "Stok Habis" (cek dulu sebelum publish)</label>
     <div id="previewList"></div>
-    <button class="btn green wide" id="downloadBtn">⬇️ Download File JSON</button>
+    <button class="btn green wide" id="publishBtn">🚀 Publish ke GitHub (repo SORONG)</button>
+    <div id="publishStatus"></div>
+    <div class="divider-or">atau</div>
+    <button class="btn outline wide" id="downloadBtn">⬇️ Download File JSON (cadangan/manual)</button>
   </div>
 
   <div class="card" id="instructionsWrap" style="display:none;">
-    <h2>3. Publish ke GitHub (repo SORONG)</h2>
+    <h2>Cara upload manual (kalau publish otomatis gagal)</h2>
     <div class="filename-box" id="filenameBox">stock.json</div>
     <ol class="steps">
       <li>Buka repo GitHub katalog <b>SORONG</b> di browser (repo ini HARUS beda dari repo kota lain).</li>
@@ -121,7 +138,7 @@
   <div class="card">
     <h2>ℹ️ Catatan</h2>
     <p style="font-size:12px;color:var(--muted);line-height:1.6;margin:0;">
-      SKU yang TIDAK muncul sama sekali di kolom "Gudang Utama" pada file yang di-upload akan otomatis ditandai <b>Stok Habis</b> di katalog SORONG. SKU yang muncul dengan stok Karton/Lusin/Pcs berapa pun (&gt;0) akan ditandai Stok Tersedia (tampilan normal). File ini diproses 100% di browser Anda &mdash; tidak dikirim ke server mana pun. Halaman admin ini HANYA memengaruhi katalog SORONG &mdash; tidak ada koneksi apa pun ke repo/katalog kota lain.
+      SKU yang TIDAK muncul sama sekali di kolom "Gudang Utama" pada file yang di-upload akan otomatis ditandai <b>Stok Habis</b> di katalog SORONG. SKU yang muncul dengan stok Karton/Lusin/Pcs berapa pun (&gt;0) akan ditandai Stok Tersedia (tampilan normal). File Excel diproses 100% di browser Anda &mdash; tidak dikirim ke server mana pun selain permintaan publish ke GitHub API di atas. Halaman admin ini HANYA memengaruhi katalog SORONG &mdash; tidak ada koneksi apa pun ke repo/katalog kota lain.
     </p>
   </div>
 </div>
@@ -159,6 +176,53 @@ KATALOG_NAMA.forEach(function(pair){ NAMA_BY_KODE[pair[0]] = pair[1]; });
 
 const KOTA = "SORONG";
 let lastResult = null; // {habis: [...]}
+
+// ===== Publish otomatis ke GitHub (repo SORONG SAJA) lewat Worker backend =====
+// v18c: token GitHub asli TIDAK disimpan di halaman ini (browser) sama sekali --
+// tersimpan aman di server kecil (Cloudflare Worker) yang cuma dipercaya oleh
+// APP_SECRET di bawah. Kalau APP_SECRET ini bocor, paling parah orang cuma bisa
+// suruh worker overwrite stock.json (bukan akses GitHub/repo langsung).
+const WORKER_URL = "https://katalog-sorong-publish.unileverteritorisorong.workers.dev";
+const APP_SECRET = "5skCGpKU9H51893dgYwqOAgMkY9swtb6zKM_QTFRWnM";
+
+async function publishToGitHub(){
+  if(!lastResult) return;
+  const publishBtn = document.getElementById('publishBtn');
+  const publishStatus = document.getElementById('publishStatus');
+  publishBtn.disabled = true;
+  publishStatus.className = '';
+  publishStatus.textContent = 'Menghubungi server publish...';
+
+  const payload = {
+    kota: KOTA,
+    sumber_file: lastResult.sourceFile,
+    updated_at: new Date().toLocaleString('id-ID', {dateStyle:'medium', timeStyle:'short'}),
+    habis: lastResult.habis
+  };
+
+  try{
+    const resp = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appSecret: APP_SECRET, stock: payload })
+    });
+    const data = await resp.json().catch(function(){ return {}; });
+
+    if(resp.ok && data.ok){
+      publishStatus.className = 'ok';
+      publishStatus.textContent = '✅ Berhasil dipublish ke GitHub! Katalog ' + KOTA + ' akan ter-update dalam ±1 menit (setelah GitHub Pages selesai redeploy).';
+    } else {
+      throw new Error(data.error || ('Gagal publish (' + resp.status + ')'));
+    }
+  } catch(e){
+    publishStatus.className = 'err';
+    publishStatus.textContent = '❌ ' + e.message + ' — silakan pakai tombol Download JSON di bawah sebagai cadangan (upload manual ke GitHub).';
+    console.error(e);
+  } finally {
+    publishBtn.disabled = false;
+  }
+}
+document.getElementById('publishBtn').addEventListener('click', publishToGitHub);
 
 document.getElementById('prosesBtn').addEventListener('click', async function(){
   const fileInput = document.getElementById('fileInput');
